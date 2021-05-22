@@ -11,7 +11,6 @@ import (
 	"io/ioutil"
 	"math/big"
 	"net"
-	"os"
 	"time"
 )
 
@@ -33,9 +32,6 @@ func genCert(template, parent *x509.Certificate, publicKey *rsa.PublicKey, priva
 }
 
 func GenCARoot() (*x509.Certificate, []byte, *rsa.PrivateKey) {
-	if _, err := os.Stat("someFile"); err == nil {
-		//read PEM and cert from file
-	}
 	var rootTemplate = x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
@@ -60,18 +56,18 @@ func GenCARoot() (*x509.Certificate, []byte, *rsa.PrivateKey) {
 	return rootCert, rootPEM, priv
 }
 
-func GenDCA(RootCert *x509.Certificate, RootKey *rsa.PrivateKey) (*x509.Certificate, []byte, *rsa.PrivateKey) {
+func GenSubCA(RootCert *x509.Certificate, RootKey *rsa.PrivateKey) (*x509.Certificate, []byte, *rsa.PrivateKey) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		panic(err)
 	}
 
-	var DCATemplate = x509.Certificate{
+	var SubCATemplate = x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
 			Country:      []string{"SE"},
 			Organization: []string{"Company Co."},
-			CommonName:   "DCA",
+			CommonName:   "SubCA",
 		},
 		NotBefore:             time.Now().Add(-10 * time.Second),
 		NotAfter:              time.Now().Add(10 * time.Minute),
@@ -83,17 +79,17 @@ func GenDCA(RootCert *x509.Certificate, RootKey *rsa.PrivateKey) (*x509.Certific
 		MaxPathLen:            1,
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
 	}
-	DCACert, DCAPEM := genCert(&DCATemplate, RootCert, &priv.PublicKey, RootKey)
-	return DCACert, DCAPEM, priv
+	SubCACert, SubCAPEM := genCert(&SubCATemplate, RootCert, &priv.PublicKey, RootKey)
+	return SubCACert, SubCAPEM, priv
 }
 
-func GenServerCert(DCACert *x509.Certificate, DCAKey *rsa.PrivateKey, commonName string) (*x509.Certificate, []byte, *rsa.PrivateKey) {
+func GenDeviceCert(SubCACert *x509.Certificate, SubCAKey *rsa.PrivateKey, commonName string) (*x509.Certificate, []byte, *rsa.PrivateKey) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		panic(err)
 	}
 
-	var ServerTemplate = x509.Certificate{
+	var DeviceTemplate = x509.Certificate{
 		SerialNumber:   big.NewInt(1),
 		Subject:        pkix.Name{CommonName: commonName},
 		NotBefore:      time.Now().Add(-10 * time.Second),
@@ -105,8 +101,8 @@ func GenServerCert(DCACert *x509.Certificate, DCAKey *rsa.PrivateKey, commonName
 		IPAddresses:    []net.IP{net.ParseIP("127.0.0.1")},
 	}
 
-	ServerCert, ServerPEM := genCert(&ServerTemplate, DCACert, &priv.PublicKey, DCAKey)
-	return ServerCert, ServerPEM, priv
+	DeviceCert, DevicePEM := genCert(&DeviceTemplate, SubCACert, &priv.PublicKey, SubCAKey)
+	return DeviceCert, DevicePEM, priv
 
 }
 
@@ -133,12 +129,12 @@ func ParsePEMFiles(certPath, keyPath string) (*x509.Certificate, *rsa.PrivateKey
 }
 
 func main() {
-	var rootKeyPath = flag.String("keyPath", "", "The private rootCa Key")
-	var rootCertPath = flag.String("caPath", "", "The ca path")
-	var subKeyPath = flag.String("subKeyPath", "", "The sub private Key")
-	var subCertPath = flag.String("subCaPath", "", "The sub cert path")
+	var rootKeyPath = flag.String("keyPath", "", "The private key for the root ca")
+	var rootCertPath = flag.String("caPath", "", "The root ca cert path")
+	var subKeyPath = flag.String("subKeyPath", "", "The sub ca private Key")
+	var subCertPath = flag.String("subCaPath", "", "The sub ca cert path")
 	var genCA = flag.Bool("genCA", false, "Generate a new CA")
-	var genSubCA = flag.Bool("genSubCA", false, "Generate a new CA")
+	var genSubCA = flag.Bool("genSubCA", false, "Generate a new SUB CA")
 	var genDeviceCert = flag.Bool("genDevice", false, "Generate a device certificate")
 	var commonName = flag.String("cn", "", "the device certificate common name")
 	flag.Parse()
@@ -156,70 +152,52 @@ func main() {
 		fmt.Println("rootCert\n", string(rootCertPEM))
 	}
 
-	var DCACert *x509.Certificate
-	var DCACertPEM []byte
-	var DCAKey *rsa.PrivateKey
+	var SubCACert *x509.Certificate
+	var SubCACertPEM []byte
+	var SubCAKey *rsa.PrivateKey
 
 	if *genSubCA && ((rootCertPath != nil && rootKeyPath != nil) || (rootCert != nil && rootKey != nil)) {
 		var err error
 		if rootCert == nil || rootKey == nil {
 			if rootCert, rootKey, err = ParsePEMFiles(*rootCertPath, *rootKeyPath); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				panic(err)
 			}
 		}
-		DCACert, DCACertPEM, DCAKey = GenDCA(rootCert, rootKey)
-		dcaPrivKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(DCAKey)})
-		ioutil.WriteFile("subCA.key", dcaPrivKey, 0644)
-		ioutil.WriteFile("subCA.crt", DCACertPEM, 0644)
-		fmt.Println("DCACert\n", string(DCACertPEM))
-		fmt.Println(string(dcaPrivKey))
+		SubCACert, SubCACertPEM, SubCAKey = GenSubCA(rootCert, rootKey)
+		SubCAPrivKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(SubCAKey)})
+		ioutil.WriteFile("subCA.key", SubCAPrivKey, 0644)
+		ioutil.WriteFile("subCA.crt", SubCACertPEM, 0644)
+		fmt.Println("SubCACert\n", string(SubCACertPEM))
+		fmt.Println(string(SubCAPrivKey))
 	}
-	//verifyDCA(rootCert, DCACert)
+	//verifySubCA(rootCert, SubCACert)
 
-	if *genDeviceCert && ((subCertPath != nil && subKeyPath != nil) || (DCACert != nil && DCAKey != nil)) {
-		if DCACert == nil || DCAKey == nil {
+	if *genDeviceCert && ((subCertPath != nil && subKeyPath != nil) || (SubCACert != nil && SubCAKey != nil)) {
+		if SubCACert == nil || SubCAKey == nil {
 			var err error
-			if DCACert, DCAKey, err = ParsePEMFiles(*subCertPath, *subKeyPath); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+			if SubCACert, SubCAKey, err = ParsePEMFiles(*subCertPath, *subKeyPath); err != nil {
+				panic(err)
 			}
 		}
-		_, ServerPEM, ServerKey := GenServerCert(DCACert, DCAKey, *commonName)
-		deviceKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(ServerKey)})
-		ioutil.WriteFile("device.key", deviceKey, 0644)
-		ioutil.WriteFile("device.crt", ServerPEM, 0644)
+		_, DevicePEM, DeviceKey := GenDeviceCert(SubCACert, SubCAKey, *commonName)
+		deviceKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(DeviceKey)})
+		ioutil.WriteFile("device-"+*commonName+".key", deviceKey, 0644)
+		ioutil.WriteFile("device-"+*commonName+".crt", DevicePEM, 0644)
 		fmt.Println(string(deviceKey))
-		fmt.Println("ServerPEM\n", string(ServerPEM))
+		fmt.Println("DevicePEM\n", string(DevicePEM))
 	}
-	//verifyLow(rootCert, DCACert, ServerCert)
+	//verifyLow(rootCert, SubCACert, DeviceCert)
 }
 
-func verifyDCA(root, dca *x509.Certificate) {
+func verifySubCA(root, SubCA *x509.Certificate) {
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
 	opts := x509.VerifyOptions{
 		Roots: roots,
 	}
 
-	if _, err := dca.Verify(opts); err != nil {
+	if _, err := SubCA.Verify(opts); err != nil {
 		panic("failed to verify certificate: " + err.Error())
 	}
-	fmt.Println("DCA verified")
-}
-
-func verifyLow(root, DCA, child *x509.Certificate) {
-	roots := x509.NewCertPool()
-	inter := x509.NewCertPool()
-	roots.AddCert(root)
-	inter.AddCert(DCA)
-	opts := x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: inter,
-	}
-
-	if _, err := child.Verify(opts); err != nil {
-		panic("failed to verify certificate: " + err.Error())
-	}
-	fmt.Println("Low Verified")
+	fmt.Println("SubCA verified")
 }
