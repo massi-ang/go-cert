@@ -17,6 +17,10 @@ This tool, based on golang x509 libraries, provides a simpler way to generate su
 
 ## How to use
 
+You'll need go 1.15 or above to use this tool. 
+
+Clone the repo and run `go build *.go`.
+
 The code is intended to be an sample that will be modified to suit the user needs. 
 It provides some flags that can be used to control the certificate generation and to import existing CAs instead of creating new ones. The certificates and private keys being created are saved to disk and printed on screen.
 
