@@ -68,7 +68,7 @@ func GenSubCA(RootCert *x509.Certificate, RootKey *rsa.PrivateKey) (*x509.Certif
 			CommonName:   "SubCA",
 		},
 		NotBefore:             time.Now().Add(-10 * time.Second),
-		NotAfter:              time.Now().Add(2 * time.Minute),
+		NotAfter:              time.Now().Add(10 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
@@ -125,13 +125,13 @@ func ParsePEMFiles(certPath, keyPath string) (*x509.Certificate, *rsa.PrivateKey
 }
 
 func main() {
-	var rootKeyPath = flag.String("keyPath", "", "The private key for the root ca")
-	var rootCertPath = flag.String("caPath", "", "The root ca cert path")
-	var subKeyPath = flag.String("subKeyPath", "", "The sub ca private Key")
-	var subCertPath = flag.String("subCaPath", "", "The sub ca cert path")
-	var genCA = flag.Bool("genCA", false, "Generate a new CA")
-	var genSubCA = flag.Bool("genSubCA", false, "Generate a new SUB CA")
-	var genDeviceCert = flag.Bool("genDevice", false, "Generate a device certificate")
+	var rootKeyPath = flag.String("caKeyPath", "", "The private key for the root ca")
+	var rootCertPath = flag.String("caCertPath", "", "The root ca cert path")
+	var subKeyPath = flag.String("subCaKeyPath", "", "The sub ca private Key")
+	var subCertPath = flag.String("subCaCertPath", "", "The sub ca cert path")
+	var genCA = flag.Bool("ca", false, "Generate a new CA")
+	var genSubCA = flag.Bool("subCa", false, "Generate a new SUB CA")
+	var genDeviceCert = flag.Bool("device", false, "Generate a device certificate")
 	var commonName = flag.String("cn", "", "the device certificate common name")
 	flag.Parse()
 
@@ -151,22 +151,22 @@ func main() {
 	var SubCACert *x509.Certificate
 	var SubCACertPEM []byte
 	var SubCAKey *rsa.PrivateKey
-
-	if *genSubCA && ((rootCertPath != nil && rootKeyPath != nil) || (rootCert != nil && rootKey != nil)) {
-		var err error
-		if rootCert == nil || rootKey == nil {
-			if rootCert, rootKey, err = ParsePEMFiles(*rootCertPath, *rootKeyPath); err != nil {
-				panic(err)
-			}
+	var err error
+	if rootCert == nil || rootKey == nil {
+		if rootCert, rootKey, err = ParsePEMFiles(*rootCertPath, *rootKeyPath); err != nil {
+			panic(err)
 		}
+	}
+
+	if *genSubCA {
 		SubCACert, SubCACertPEM, SubCAKey = GenSubCA(rootCert, rootKey)
 		SubCAPrivKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(SubCAKey)})
 		ioutil.WriteFile("subCA.key", SubCAPrivKey, 0644)
 		ioutil.WriteFile("subCA.crt", SubCACertPEM, 0644)
 		fmt.Println("SubCACert\n", string(SubCACertPEM))
 		fmt.Println(string(SubCAPrivKey))
+		verifySubCA(rootCert, SubCACert)
 	}
-	//verifySubCA(rootCert, SubCACert)
 
 	if *genDeviceCert && ((subCertPath != nil && subKeyPath != nil) || (SubCACert != nil && SubCAKey != nil)) {
 		if SubCACert == nil || SubCAKey == nil {
@@ -175,14 +175,17 @@ func main() {
 				panic(err)
 			}
 		}
-		_, DevicePEM, DeviceKey := GenDeviceCert(SubCACert, SubCAKey, *commonName)
+		DeviceCert, DevicePEM, DeviceKey := GenDeviceCert(SubCACert, SubCAKey, *commonName)
 		deviceKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(DeviceKey)})
 		ioutil.WriteFile("device-"+*commonName+".key", deviceKey, 0644)
 		ioutil.WriteFile("device-"+*commonName+".crt", DevicePEM, 0644)
 		fmt.Println(string(deviceKey))
 		fmt.Println("DevicePEM\n", string(DevicePEM))
+		if rootCert != nil {
+			verifyDevice(rootCert, SubCACert, DeviceCert)
+		}
 	}
-	//verifyLow(rootCert, SubCACert, DeviceCert)
+
 }
 
 func verifySubCA(root, SubCA *x509.Certificate) {
@@ -193,7 +196,23 @@ func verifySubCA(root, SubCA *x509.Certificate) {
 	}
 
 	if _, err := SubCA.Verify(opts); err != nil {
-		panic("failed to verify certificate: " + err.Error())
+		panic("failed to verify subCA certificate: " + err.Error())
 	}
 	fmt.Println("SubCA verified")
+}
+
+func verifyDevice(root, subCA, device *x509.Certificate) {
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	intermediates := x509.NewCertPool()
+	intermediates.AddCert(subCA)
+	opts := x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+	}
+
+	if _, err := device.Verify(opts); err != nil {
+		panic("failed to verify device certificate: " + err.Error())
+	}
+	fmt.Println("Device cert verified")
 }
