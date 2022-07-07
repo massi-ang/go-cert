@@ -41,12 +41,10 @@ func GenCARoot() (*x509.Certificate, []byte, *rsa.PrivateKey) {
 		},
 		NotBefore:             time.Now().Add(-10 * time.Second),
 		NotAfter:              time.Now().Add(10 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 		MaxPathLen:            2,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
 	}
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -70,14 +68,12 @@ func GenSubCA(RootCert *x509.Certificate, RootKey *rsa.PrivateKey) (*x509.Certif
 			CommonName:   "SubCA",
 		},
 		NotBefore:             time.Now().Add(-10 * time.Second),
-		NotAfter:              time.Now().Add(10 * time.Minute),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		NotAfter:              time.Now().Add(2 * time.Minute),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 		MaxPathLenZero:        false,
 		MaxPathLen:            1,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
 	}
 	SubCACert, SubCAPEM := genCert(&SubCATemplate, RootCert, &priv.PublicKey, RootKey)
 	return SubCACert, SubCAPEM, priv
@@ -92,9 +88,9 @@ func GenDeviceCert(SubCACert *x509.Certificate, SubCAKey *rsa.PrivateKey, common
 	var DeviceTemplate = x509.Certificate{
 		SerialNumber:   big.NewInt(1),
 		Subject:        pkix.Name{CommonName: commonName},
-		NotBefore:      time.Now().Add(-10 * time.Second),
-		NotAfter:       time.Now().AddDate(10, 0, 0),
-		KeyUsage:       x509.KeyUsageCRLSign,
+		NotBefore:      time.Now(),
+		NotAfter:       time.Now().Add(10 * time.Hour),
+		KeyUsage:       x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IsCA:           false,
 		MaxPathLenZero: true,
