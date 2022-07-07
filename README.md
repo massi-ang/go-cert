@@ -4,7 +4,7 @@ A super simple tool that generates a Root CA, a subordinate CA and Device Certif
 
 Check the options with:
 
-./gocert -help
+`./go-cert -help`
 
 ## Why
 
